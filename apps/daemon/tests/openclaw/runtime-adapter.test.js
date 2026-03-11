@@ -294,6 +294,90 @@ describe("openclaw runtime adapter", () => {
     });
   });
 
+  it("uses OPENAI_MODEL env var when OPENCLAW_MODEL is absent", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ id: "resp-1", output_text: "hello" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      env: { OPENAI_MODEL: "gpt-4.1-openai" }
+    });
+
+    await adapter.messaging.send({
+      agentId: "agent-main",
+      sessionKey: "session-001",
+      content: "hello"
+    });
+
+    const [, requestInit] = fetchImpl.mock.calls[0];
+    expect(JSON.parse(requestInit.body)).toMatchObject({
+      input: "hello",
+      model: "gpt-4.1-openai"
+    });
+  });
+
+  it("uses MODEL env var when OPENCLAW_MODEL and OPENAI_MODEL are absent", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ id: "resp-1", output_text: "hello" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      env: { MODEL: "gpt-4.1-generic" }
+    });
+
+    await adapter.messaging.send({
+      agentId: "agent-main",
+      sessionKey: "session-001",
+      content: "hello"
+    });
+
+    const [, requestInit] = fetchImpl.mock.calls[0];
+    expect(JSON.parse(requestInit.body)).toMatchObject({
+      input: "hello",
+      model: "gpt-4.1-generic"
+    });
+  });
+
+  it("prefers higher-priority model sources over lower-priority env fallbacks", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ id: "resp-1", output_text: "hello" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      openclawModel: "gpt-4.1-options",
+      env: {
+        OPENCLAW_MODEL: "gpt-4.1-openclaw",
+        OPENAI_MODEL: "gpt-4.1-openai",
+        MODEL: "gpt-4.1-generic"
+      }
+    });
+
+    await adapter.messaging.send({
+      agentId: "agent-main",
+      sessionKey: "session-001",
+      content: "hello",
+      model: "gpt-4.1-per-call"
+    });
+
+    const [, requestInit] = fetchImpl.mock.calls[0];
+    expect(JSON.parse(requestInit.body)).toMatchObject({
+      input: "hello",
+      model: "gpt-4.1-per-call"
+    });
+  });
+
   it("prefers per-call model over adapter fallback model", async () => {
     const fetchImpl = vi.fn(async () => {
       return new Response(JSON.stringify({ id: "resp-1", output_text: "hello" }), {

@@ -204,7 +204,11 @@ export function createOpenclawRuntimeAdapter(options = {}) {
     asNonEmptyString(env.OPENCLAW_GATEWAY_PASSWORD) ??
     null;
   const openclawModel =
-    asNonEmptyString(options.openclawModel) ?? asNonEmptyString(env.OPENCLAW_MODEL) ?? null;
+    asNonEmptyString(options.openclawModel) ??
+    asNonEmptyString(env.OPENCLAW_MODEL) ??
+    asNonEmptyString(env.OPENAI_MODEL) ??
+    asNonEmptyString(env.MODEL) ??
+    null;
   const resolvePreferredStateDirImpl = options.resolvePreferredStateDir ?? resolvePreferredStateDir;
   const resolveConfigCandidatesImpl = options.resolveConfigCandidates ?? resolveConfigCandidates;
 
