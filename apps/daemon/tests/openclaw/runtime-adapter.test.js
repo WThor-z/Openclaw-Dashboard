@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createOpenclawRuntimeAdapter } from "../../src/platform/openclaw/runtime-adapter.js";
 
+const DEFAULT_MODEL = "gpt-4.1-mini";
+
 function createRunnerResult(stdout, exitCode = 0, stderr = "") {
   return { exitCode, stdout, stderr };
 }
@@ -18,7 +20,8 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
-      openclawApiBaseUrl: "http://127.0.0.1:11478"
+      openclawApiBaseUrl: "http://127.0.0.1:11478",
+      openclawModel: DEFAULT_MODEL
     });
 
     const response = await adapter.messaging.send({
@@ -37,6 +40,10 @@ describe("openclaw runtime adapter", () => {
       "x-openclaw-agent-id": "agent-main",
       "x-openclaw-session-key": "session-001"
     });
+    expect(JSON.parse(requestInit.body)).toMatchObject({
+      input: "hello",
+      model: DEFAULT_MODEL
+    });
   });
 
   it("reads base URL from OPENCLAW_API_BASE_URL env var when options not provided", async () => {
@@ -50,6 +57,7 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
+      openclawModel: DEFAULT_MODEL,
       env: { OPENCLAW_API_BASE_URL: "http://127.0.0.1:18789" }
     });
 
@@ -75,6 +83,7 @@ describe("openclaw runtime adapter", () => {
       fetchImpl,
       runCommand,
       openclawApiBaseUrl: "http://127.0.0.1:99999",
+      openclawModel: DEFAULT_MODEL,
       env: { OPENCLAW_API_BASE_URL: "http://127.0.0.1:18789" }
     });
 
@@ -99,6 +108,7 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
+      openclawModel: DEFAULT_MODEL,
       env: {}
     });
 
@@ -123,6 +133,7 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
+      openclawModel: DEFAULT_MODEL,
       env: { OPENCLAW_GATEWAY_TOKEN: "test-token-123" }
     });
 
@@ -153,6 +164,7 @@ describe("openclaw runtime adapter", () => {
       fetchImpl,
       runCommand,
       openclawGatewayToken: "options-token",
+      openclawModel: DEFAULT_MODEL,
       env: { OPENCLAW_GATEWAY_TOKEN: "env-token" }
     });
 
@@ -179,6 +191,7 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
+      openclawModel: DEFAULT_MODEL,
       env: {}
     });
 
@@ -208,6 +221,7 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
+      openclawModel: DEFAULT_MODEL,
       env: { OPENCLAW_GATEWAY_PASSWORD: "password-credential-456" }
     });
 
@@ -237,6 +251,7 @@ describe("openclaw runtime adapter", () => {
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
       runCommand,
+      openclawModel: DEFAULT_MODEL,
       env: {
         OPENCLAW_GATEWAY_TOKEN: "token-credential",
         OPENCLAW_GATEWAY_PASSWORD: "password-credential"
@@ -251,6 +266,81 @@ describe("openclaw runtime adapter", () => {
 
     const [, requestInit] = fetchImpl.mock.calls[0];
     expect(requestInit.headers.authorization).toBe("Bearer token-credential");
+  });
+
+  it("uses OPENCLAW_MODEL env var when send input does not provide a model", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ id: "resp-1", output_text: "hello" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      env: { OPENCLAW_MODEL: "gpt-4.1-mini" }
+    });
+
+    await adapter.messaging.send({
+      agentId: "agent-main",
+      sessionKey: "session-001",
+      content: "hello"
+    });
+
+    const [, requestInit] = fetchImpl.mock.calls[0];
+    expect(JSON.parse(requestInit.body)).toMatchObject({
+      input: "hello",
+      model: "gpt-4.1-mini"
+    });
+  });
+
+  it("prefers per-call model over adapter fallback model", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ id: "resp-1", output_text: "hello" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    });
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      openclawModel: "gpt-4.1-mini",
+      env: { OPENCLAW_MODEL: "gpt-4.1-nano" }
+    });
+
+    await adapter.messaging.send({
+      agentId: "agent-main",
+      sessionKey: "session-001",
+      content: "hello",
+      model: "gpt-4.1"
+    });
+
+    const [, requestInit] = fetchImpl.mock.calls[0];
+    expect(JSON.parse(requestInit.body)).toMatchObject({
+      input: "hello",
+      model: "gpt-4.1"
+    });
+  });
+
+  it("fails fast when no messaging model can be resolved", async () => {
+    const fetchImpl = vi.fn();
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      env: {}
+    });
+
+    await expect(
+      adapter.messaging.send({
+        agentId: "agent-main",
+        sessionKey: "session-001",
+        content: "hello"
+      })
+    ).rejects.toMatchObject({
+      code: "OPENCLAW_MODEL_REQUIRED",
+      message: "model is required"
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("wraps cron operations as non-interactive CLI calls", async () => {
@@ -494,7 +584,8 @@ describe("openclaw runtime adapter", () => {
     });
     const adapter = createOpenclawRuntimeAdapter({
       fetchImpl,
-      runCommand: vi.fn()
+      runCommand: vi.fn(),
+      openclawModel: DEFAULT_MODEL
     });
 
     await expect(

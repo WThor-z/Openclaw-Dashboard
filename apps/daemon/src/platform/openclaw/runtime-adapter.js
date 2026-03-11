@@ -203,6 +203,8 @@ export function createOpenclawRuntimeAdapter(options = {}) {
     asNonEmptyString(env.OPENCLAW_GATEWAY_TOKEN) ??
     asNonEmptyString(env.OPENCLAW_GATEWAY_PASSWORD) ??
     null;
+  const openclawModel =
+    asNonEmptyString(options.openclawModel) ?? asNonEmptyString(env.OPENCLAW_MODEL) ?? null;
   const resolvePreferredStateDirImpl = options.resolvePreferredStateDir ?? resolvePreferredStateDir;
   const resolveConfigCandidatesImpl = options.resolveConfigCandidates ?? resolveConfigCandidates;
 
@@ -261,20 +263,25 @@ export function createOpenclawRuntimeAdapter(options = {}) {
     const finalAgentId = asNonEmptyString(agentId);
     const finalSessionKey = asNonEmptyString(sessionKey);
     const finalContent = asNonEmptyString(content);
+    const finalModel = asNonEmptyString(model) ?? openclawModel;
     if (!finalAgentId || !finalSessionKey || !finalContent) {
       throw normalizeOpenclawAdapterError(
         { code: "OPENCLAW_BAD_REQUEST", message: "agentId, sessionKey, and content are required" },
         "OPENCLAW_BAD_REQUEST"
       );
     }
+    if (!finalModel) {
+      throw normalizeOpenclawAdapterError(
+        { code: "OPENCLAW_MODEL_REQUIRED", message: "model is required" },
+        "OPENCLAW_MODEL_REQUIRED"
+      );
+    }
 
     const url = `${openclawApiBaseUrl}/v1/responses`;
     const requestBody = {
-      input: finalContent
+      input: finalContent,
+      model: finalModel
     };
-    if (asNonEmptyString(model)) {
-      requestBody.model = model;
-    }
 
     const headers = {
       "content-type": "application/json",
