@@ -16,6 +16,39 @@ afterEach(async () => {
 });
 
 describe("session registry configured model resolution", () => {
+  it("supports object-style defaults model with primary field", async () => {
+    const homeDir = await mkdtemp(
+      path.join(os.tmpdir(), "daemon-session-registry-default-model-object-")
+    );
+    temporaryDirectories.push(homeDir);
+    const openclawDir = path.join(homeDir, ".openclaw");
+    await mkdir(openclawDir, { recursive: true });
+    await writeFile(
+      path.join(openclawDir, "openclaw.json"),
+      JSON.stringify(
+        {
+          agents: {
+            defaults: {
+              model: {
+                primary: "openai-codex/gpt-5.3-codex",
+                fallbacks: []
+              }
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const env = { HOME: homeDir, USERPROFILE: homeDir };
+
+    await expect(resolveConfiguredAgentModel("PERSONAL-ASSISTANT-2", { env })).resolves.toBe(
+      "openai-codex/gpt-5.3-codex"
+    );
+  });
+
   it("prefers agents.list model over agents.defaults model", async () => {
     const homeDir = await mkdtemp(path.join(os.tmpdir(), "daemon-session-registry-model-"));
     temporaryDirectories.push(homeDir);

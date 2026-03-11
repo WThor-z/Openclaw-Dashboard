@@ -207,6 +207,9 @@ function pickStringByPaths(target, pathCandidates) {
 function pickConfiguredModel(target) {
   return pickStringByPaths(target, [
     ["model"],
+    ["model", "primary"],
+    ["model", "default"],
+    ["model", "value"],
     ["openclawModel"],
     ["openaiModel"],
     ["llm", "model"]

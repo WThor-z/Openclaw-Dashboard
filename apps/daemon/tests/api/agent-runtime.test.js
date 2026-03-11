@@ -125,7 +125,11 @@ function createRuntimeAdapter(overrides = {}) {
   };
 }
 
-async function startServer({ repositories, openclawRuntimeAdapter, resolveAgentModel }) {
+async function startServer({
+  repositories,
+  openclawRuntimeAdapter,
+  resolveAgentModel = vi.fn(async () => null)
+}) {
   const server = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
