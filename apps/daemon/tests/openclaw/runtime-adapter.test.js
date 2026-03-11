@@ -427,6 +427,37 @@ describe("openclaw runtime adapter", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("treats business-error JSON output as adapter failure even when HTTP is 200", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          id: "resp-business-error",
+          output_text: '{"detail":{"code":"deactivated_workspace"}}'
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    });
+    const adapter = createOpenclawRuntimeAdapter({
+      fetchImpl,
+      runCommand: vi.fn(),
+      openclawModel: DEFAULT_MODEL
+    });
+
+    await expect(
+      adapter.messaging.send({
+        agentId: "agent-main",
+        sessionKey: "session-001",
+        content: "hello"
+      })
+    ).rejects.toMatchObject({
+      code: "OPENCLAW_UPSTREAM_DEACTIVATED_WORKSPACE",
+      message: "deactivated_workspace"
+    });
+  });
+
   it("wraps cron operations as non-interactive CLI calls", async () => {
     const runCommand = vi
       .fn()

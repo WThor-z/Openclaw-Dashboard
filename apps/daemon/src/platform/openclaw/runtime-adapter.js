@@ -74,6 +74,61 @@ function extractResponseOutputText(payload) {
   return chunks.join("\n");
 }
 
+function tryParseJsonObject(input) {
+  if (typeof input !== "string") {
+    return null;
+  }
+
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractBusinessError(payload, outputText) {
+  if (payload && typeof payload === "object") {
+    if (typeof payload.error?.code === "string") {
+      return {
+        code: payload.error.code,
+        message:
+          asNonEmptyString(payload.error?.message) ??
+          asNonEmptyString(payload.error?.code) ??
+          "Upstream runtime reported an error"
+      };
+    }
+
+    if (typeof payload.detail?.code === "string") {
+      return {
+        code: payload.detail.code,
+        message:
+          asNonEmptyString(payload.detail?.message) ??
+          asNonEmptyString(payload.detail?.code) ??
+          "Upstream runtime reported an error"
+      };
+    }
+  }
+
+  const parsedOutput = tryParseJsonObject(outputText);
+  if (parsedOutput && typeof parsedOutput.detail?.code === "string") {
+    return {
+      code: parsedOutput.detail.code,
+      message:
+        asNonEmptyString(parsedOutput.detail?.message) ??
+        asNonEmptyString(parsedOutput.detail?.code) ??
+        "Upstream runtime reported an error"
+    };
+  }
+
+  return null;
+}
+
 export function normalizeOpenclawAdapterError(error, fallbackCode, details = undefined) {
   if (
     error &&
@@ -338,9 +393,24 @@ export function createOpenclawRuntimeAdapter(options = {}) {
       );
     }
 
+    const outputText = extractResponseOutputText(payload);
+    const businessError = extractBusinessError(payload, outputText);
+    if (businessError) {
+      throw normalizeOpenclawAdapterError(
+        {
+          code: `OPENCLAW_UPSTREAM_${makeErrorCode(businessError.code, "BUSINESS_ERROR")}`,
+          message: businessError.message
+        },
+        "OPENCLAW_UPSTREAM_BUSINESS_ERROR",
+        {
+          body: payload
+        }
+      );
+    }
+
     return {
       id: asNonEmptyString(payload?.id) ?? null,
-      outputText: extractResponseOutputText(payload),
+      outputText,
       raw: payload
     };
   }
