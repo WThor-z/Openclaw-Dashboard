@@ -66,6 +66,7 @@ describe("v2 runtime contracts", () => {
       agentId: "agent-1",
       workspaceId: "workspace-1",
       sessionKey: "dashboard:agent-1:conversation-1",
+      model: "gpt-4.1-mini",
       title: "Weekly review",
       status: "active",
       createdAt: "2026-03-10T10:00:00.000Z",

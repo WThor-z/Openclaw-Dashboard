@@ -204,7 +204,8 @@ export function createControlApiRouter({
   readOnlyMode = false,
   writeArmWindowMs = DEFAULT_ARM_WINDOW_MS,
   webhookEndpointPolicy = {},
-  openclawRuntimeAdapter
+  openclawRuntimeAdapter,
+  resolveAgentModel
 } = {}) {
   const mutationLocks = new Map();
   const armingState = {
@@ -216,7 +217,8 @@ export function createControlApiRouter({
   };
   const agentRuntimeControlApi = createAgentRuntimeControlApi({
     repositories,
-    openclawRuntimeAdapter
+    openclawRuntimeAdapter,
+    resolveAgentModel
   });
 
   function assertWriteAllowed(pathname) {

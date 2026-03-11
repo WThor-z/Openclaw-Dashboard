@@ -219,7 +219,10 @@ async function sendConversationMessage({
     const adapterResponse = await openclawRuntimeAdapter.messaging.send({
       agentId: conversation.agentId,
       sessionKey: conversation.sessionKey,
-      content
+      content,
+      ...(readOptionalString(conversation.model)
+        ? { model: readOptionalString(conversation.model) }
+        : {})
     });
     const completedAt = new Date().toISOString();
     repositories?.conversationMessages?.completeAssistantMessage?.({
@@ -265,7 +268,31 @@ async function sendConversationMessage({
   }
 }
 
-export function createAgentRuntimeControlApi({ repositories, openclawRuntimeAdapter }) {
+async function resolveConversationModelSnapshot({
+  agentId,
+  resolveAgentModel,
+  openclawRuntimeAdapter
+}) {
+  const configuredModel =
+    typeof resolveAgentModel === "function"
+      ? readOptionalString(await resolveAgentModel(agentId))
+      : null;
+  if (configuredModel) {
+    return configuredModel;
+  }
+
+  if (typeof openclawRuntimeAdapter?.messaging?.resolveModel === "function") {
+    return readOptionalString(openclawRuntimeAdapter.messaging.resolveModel());
+  }
+
+  return null;
+}
+
+export function createAgentRuntimeControlApi({
+  repositories,
+  openclawRuntimeAdapter,
+  resolveAgentModel
+}) {
   return {
     resolve(pathname) {
       const route = resolveControlRoute(pathname);
@@ -287,6 +314,11 @@ export function createAgentRuntimeControlApi({ repositories, openclawRuntimeAdap
               "workspaceId is required"
             );
             const title = readNonEmptyString(body.title, "TITLE_REQUIRED", "title is required");
+            const model = await resolveConversationModelSnapshot({
+              agentId: route.agentId,
+              resolveAgentModel,
+              openclawRuntimeAdapter
+            });
             const createdAt = new Date().toISOString();
             const conversationId = randomUUID();
             repositories?.conversations?.insert?.({
@@ -296,6 +328,7 @@ export function createAgentRuntimeControlApi({ repositories, openclawRuntimeAdap
               sessionKey: `dashboard:${route.agentId}:${conversationId}`,
               title,
               status: "active",
+              model,
               createdAt,
               updatedAt: createdAt,
               archivedAt: null

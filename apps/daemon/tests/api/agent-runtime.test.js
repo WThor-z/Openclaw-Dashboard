@@ -125,14 +125,15 @@ function createRuntimeAdapter(overrides = {}) {
   };
 }
 
-async function startServer({ repositories, openclawRuntimeAdapter }) {
+async function startServer({ repositories, openclawRuntimeAdapter, resolveAgentModel }) {
   const server = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
     adminToken: ADMIN_TOKEN,
     logger: { info() {}, error() {} },
     repositories,
-    openclawRuntimeAdapter
+    openclawRuntimeAdapter,
+    resolveAgentModel
   });
   await server.start();
   activeServers.push(server);
@@ -277,6 +278,157 @@ describe("agent runtime APIs", () => {
         "control.agent-runtime.conversations.archive"
       ])
     );
+  });
+
+  it("persists resolved model on conversation create and forwards it on send", async () => {
+    const repositories = createFixtureRepositories();
+    const runtimeAdapter = createRuntimeAdapter();
+    const server = await startServer({
+      repositories,
+      openclawRuntimeAdapter: runtimeAdapter,
+      resolveAgentModel: vi.fn(async () => "gpt-4.1-from-config")
+    });
+    const baseUrl = endpointFrom(server.address());
+
+    await armWrites(baseUrl);
+
+    const createResponse = await fetch(
+      `${baseUrl}/api/control/agents/${encodeURIComponent("agent-1")}/conversations/create`,
+      {
+        method: "POST",
+        headers: authorizedHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "runtime-conversation-create-model-1"
+        }),
+        body: JSON.stringify({ workspaceId: "ws-1", title: "Model snapshot" })
+      }
+    );
+    const createBody = await createResponse.json();
+
+    expect(createResponse.status).toBe(200);
+    expect(createBody.conversation).toMatchObject({
+      model: "gpt-4.1-from-config"
+    });
+
+    const conversationId = createBody.conversation.id;
+    const sendResponse = await fetch(
+      `${baseUrl}/api/control/conversations/${encodeURIComponent(conversationId)}/messages/send`,
+      {
+        method: "POST",
+        headers: authorizedHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "runtime-send-model-1"
+        }),
+        body: JSON.stringify({ content: "use snapped model" })
+      }
+    );
+
+    expect(sendResponse.status).toBe(200);
+    expect(runtimeAdapter.messaging.send).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      sessionKey: `dashboard:agent-1:${conversationId}`,
+      content: "use snapped model",
+      model: "gpt-4.1-from-config"
+    });
+  });
+
+  it("keeps null-model conversations compatible with adapter fallback", async () => {
+    const repositories = createFixtureRepositories();
+    repositories.conversations.insert({
+      id: "conversation-null-model",
+      agentId: "agent-1",
+      workspaceId: "ws-1",
+      sessionKey: "dashboard:agent-1:conversation-null-model",
+      title: "Legacy conversation",
+      status: "active",
+      model: null,
+      createdAt: "2026-03-10T10:00:00.000Z",
+      updatedAt: "2026-03-10T10:00:00.000Z",
+      archivedAt: null
+    });
+    const runtimeAdapter = createRuntimeAdapter({
+      messaging: {
+        send: vi.fn(async ({ content, model }) => {
+          if (typeof model === "string" && model.length > 0) {
+            return { id: "resp-with-model", outputText: `model:${model}:${content}`, raw: {} };
+          }
+
+          return { id: "resp-fallback", outputText: `fallback:${content}`, raw: {} };
+        })
+      }
+    });
+    const server = await startServer({ repositories, openclawRuntimeAdapter: runtimeAdapter });
+    const baseUrl = endpointFrom(server.address());
+
+    await armWrites(baseUrl);
+
+    const sendResponse = await fetch(
+      `${baseUrl}/api/control/conversations/conversation-null-model/messages/send`,
+      {
+        method: "POST",
+        headers: authorizedHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "runtime-send-null-model-fallback-1"
+        }),
+        body: JSON.stringify({ content: "fallback path" })
+      }
+    );
+    const sendBody = await sendResponse.json();
+
+    expect(sendResponse.status).toBe(200);
+    expect(sendBody.assistantMessage.content).toBe("fallback:fallback path");
+    expect(runtimeAdapter.messaging.send).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      sessionKey: "dashboard:agent-1:conversation-null-model",
+      content: "fallback path"
+    });
+  });
+
+  it("returns OPENCLAW_MODEL_REQUIRED for null-model conversations when adapter has no fallback", async () => {
+    const repositories = createFixtureRepositories();
+    repositories.conversations.insert({
+      id: "conversation-null-model-error",
+      agentId: "agent-1",
+      workspaceId: "ws-1",
+      sessionKey: "dashboard:agent-1:conversation-null-model-error",
+      title: "Legacy conversation",
+      status: "active",
+      model: null,
+      createdAt: "2026-03-10T10:00:00.000Z",
+      updatedAt: "2026-03-10T10:00:00.000Z",
+      archivedAt: null
+    });
+    const runtimeAdapter = createRuntimeAdapter({
+      messaging: {
+        send: vi.fn(async ({ model }) => {
+          if (typeof model === "string" && model.length > 0) {
+            return { id: "resp-with-model", outputText: "ok", raw: {} };
+          }
+
+          throw { code: "OPENCLAW_MODEL_REQUIRED", message: "model is required" };
+        })
+      }
+    });
+    const server = await startServer({ repositories, openclawRuntimeAdapter: runtimeAdapter });
+    const baseUrl = endpointFrom(server.address());
+
+    await armWrites(baseUrl);
+
+    const sendResponse = await fetch(
+      `${baseUrl}/api/control/conversations/conversation-null-model-error/messages/send`,
+      {
+        method: "POST",
+        headers: authorizedHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "runtime-send-null-model-error-1"
+        }),
+        body: JSON.stringify({ content: "no fallback" })
+      }
+    );
+    const sendBody = await sendResponse.json();
+
+    expect(sendResponse.status).toBe(400);
+    expect(sendBody.code).toBe("OPENCLAW_MODEL_REQUIRED");
   });
 
   it("returns CONVERSATION_NOT_FOUND for missing conversation reads and writes", async () => {

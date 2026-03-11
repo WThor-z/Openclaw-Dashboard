@@ -263,11 +263,15 @@ export function createOpenclawRuntimeAdapter(options = {}) {
     return runCli(["config", "validate"]);
   }
 
+  function resolveMessagingModel(model = undefined) {
+    return asNonEmptyString(model) ?? openclawModel;
+  }
+
   async function sendMessage({ agentId, sessionKey, content, model = undefined }) {
     const finalAgentId = asNonEmptyString(agentId);
     const finalSessionKey = asNonEmptyString(sessionKey);
     const finalContent = asNonEmptyString(content);
-    const finalModel = asNonEmptyString(model) ?? openclawModel;
+    const finalModel = resolveMessagingModel(model);
     if (!finalAgentId || !finalSessionKey || !finalContent) {
       throw normalizeOpenclawAdapterError(
         { code: "OPENCLAW_BAD_REQUEST", message: "agentId, sessionKey, and content are required" },
@@ -408,7 +412,8 @@ export function createOpenclawRuntimeAdapter(options = {}) {
 
   return {
     messaging: {
-      send: sendMessage
+      send: sendMessage,
+      resolveModel: resolveMessagingModel
     },
     cron: {
       list: ({ agentId }) => runCli(["cron", "list", "--agent", agentId, "--json"]),

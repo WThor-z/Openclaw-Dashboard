@@ -111,13 +111,13 @@ export function createStorageRepositories(db) {
       "SELECT id, workspace_id AS workspaceId, status, started_at AS startedAt, ended_at AS endedAt FROM sessions WHERE id = ? LIMIT 1"
     ),
     insertConversation: db.prepare(
-      "INSERT INTO conversations(id, agent_id, workspace_id, session_key, title, status, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO conversations(id, agent_id, workspace_id, session_key, title, status, model, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ),
     listConversationsByAgent: db.prepare(
-      "SELECT c.id, c.agent_id AS agentId, c.workspace_id AS workspaceId, c.session_key AS sessionKey, c.title, c.status, c.created_at AS createdAt, c.updated_at AS updatedAt, c.archived_at AS archivedAt, message_stats.last_message_at AS lastMessageAt, coalesce(message_stats.message_count, 0) AS messageCount FROM conversations c LEFT JOIN (SELECT conversation_id, max(created_at) AS last_message_at, count(*) AS message_count FROM conversation_messages GROUP BY conversation_id) message_stats ON message_stats.conversation_id = c.id WHERE c.agent_id = ? ORDER BY c.updated_at DESC, c.id DESC"
+      "SELECT c.id, c.agent_id AS agentId, c.workspace_id AS workspaceId, c.session_key AS sessionKey, c.title, c.status, c.model AS model, c.created_at AS createdAt, c.updated_at AS updatedAt, c.archived_at AS archivedAt, message_stats.last_message_at AS lastMessageAt, coalesce(message_stats.message_count, 0) AS messageCount FROM conversations c LEFT JOIN (SELECT conversation_id, max(created_at) AS last_message_at, count(*) AS message_count FROM conversation_messages GROUP BY conversation_id) message_stats ON message_stats.conversation_id = c.id WHERE c.agent_id = ? ORDER BY c.updated_at DESC, c.id DESC"
     ),
     getConversationById: db.prepare(
-      "SELECT c.id, c.agent_id AS agentId, c.workspace_id AS workspaceId, c.session_key AS sessionKey, c.title, c.status, c.created_at AS createdAt, c.updated_at AS updatedAt, c.archived_at AS archivedAt, message_stats.last_message_at AS lastMessageAt, coalesce(message_stats.message_count, 0) AS messageCount FROM conversations c LEFT JOIN (SELECT conversation_id, max(created_at) AS last_message_at, count(*) AS message_count FROM conversation_messages GROUP BY conversation_id) message_stats ON message_stats.conversation_id = c.id WHERE c.id = ? LIMIT 1"
+      "SELECT c.id, c.agent_id AS agentId, c.workspace_id AS workspaceId, c.session_key AS sessionKey, c.title, c.status, c.model AS model, c.created_at AS createdAt, c.updated_at AS updatedAt, c.archived_at AS archivedAt, message_stats.last_message_at AS lastMessageAt, coalesce(message_stats.message_count, 0) AS messageCount FROM conversations c LEFT JOIN (SELECT conversation_id, max(created_at) AS last_message_at, count(*) AS message_count FROM conversation_messages GROUP BY conversation_id) message_stats ON message_stats.conversation_id = c.id WHERE c.id = ? LIMIT 1"
     ),
     touchConversation: db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?"),
     archiveConversation: db.prepare(
@@ -328,6 +328,7 @@ export function createStorageRepositories(db) {
           sessionKey: record.sessionKey,
           title: record.title,
           status: record.status,
+          model: record.model ?? null,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt ?? record.createdAt,
           archivedAt: record.archivedAt ?? null

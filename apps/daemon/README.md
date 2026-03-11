@@ -85,7 +85,7 @@ Control endpoints (require arming):
 Runtime features:
 
 - **Conversation isolation** - conversations are scoped to agents with unique session keys
-- **Conversation model resolution** - message sends always forward a concrete `model`, resolving in order from per-request `model` -> adapter `openclawModel` -> `OPENCLAW_MODEL`; if none resolves, the daemon fails fast with `OPENCLAW_MODEL_REQUIRED`
+- **Conversation model snapshot** - conversation creation persists `conversation.model` with precedence `agents.list[].model` (or matching legacy routed agent model) -> `agents.defaults.model` -> adapter/env fallback (`OPENCLAW_MODEL`, `OPENAI_MODEL`, `MODEL`); message send prefers this stored value and falls back to adapter/env only when legacy conversations have `null` model
 - **Schedule management** - cron-based recurring prompts with execution history
 - **Heartbeat configuration** - periodic agent check-ins with `every`, `session`, and `lightContext` fields
 - **Memory bindings** - scoped memory attachments using `secretRef` and `apiKeyRef` only (no raw secrets)

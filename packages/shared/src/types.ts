@@ -72,6 +72,7 @@ export interface ConversationSummary {
   agentId: string;
   workspaceId: string;
   sessionKey: string;
+  model?: string | null;
   title: string;
   status: ConversationStatus;
   createdAt: string;

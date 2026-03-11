@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 
 const SESSION_REGISTRY_RELATIVE_PATH = path.join("state", "session-registry.json");
-const CONFIG_FILENAME_CANDIDATES = ["openclaw.json", "clawdbot.json", "moltbot.json", "moldbot.json"];
+const CONFIG_FILENAME_CANDIDATES = [
+  "openclaw.json",
+  "clawdbot.json",
+  "moltbot.json",
+  "moldbot.json"
+];
 const STATE_DIRNAME_CANDIDATES = [".openclaw", ".clawdbot", ".moltbot", ".moldbot"];
 const REGISTRY_COLLECTION_KEYS = [
   "sessions",
@@ -114,7 +119,8 @@ export function resolveStateDirCandidates(env = process.env) {
 
 export function resolveConfigCandidates(env = process.env) {
   const explicitConfigPath =
-    resolveUserPath(env.OPENCLAW_CONFIG_PATH, env) ?? resolveUserPath(env.CLAWDBOT_CONFIG_PATH, env);
+    resolveUserPath(env.OPENCLAW_CONFIG_PATH, env) ??
+    resolveUserPath(env.CLAWDBOT_CONFIG_PATH, env);
   if (explicitConfigPath) {
     return [explicitConfigPath];
   }
@@ -146,7 +152,9 @@ export async function resolvePreferredStateDir(env = process.env) {
       return stateDir;
     }
 
-    for (const configPath of CONFIG_FILENAME_CANDIDATES.map((filename) => path.join(stateDir, filename))) {
+    for (const configPath of CONFIG_FILENAME_CANDIDATES.map((filename) =>
+      path.join(stateDir, filename)
+    )) {
       if (await pathExists(configPath)) {
         return stateDir;
       }
@@ -157,9 +165,7 @@ export async function resolvePreferredStateDir(env = process.env) {
 }
 
 function stripJsonComments(input) {
-  return input
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+  return input.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:\\])\/\/.*$/gm, "$1");
 }
 
 function stripTrailingCommas(input) {
@@ -196,6 +202,19 @@ function pickStringByPaths(target, pathCandidates) {
   }
 
   return null;
+}
+
+function pickConfiguredModel(target) {
+  return pickStringByPaths(target, [
+    ["model"],
+    ["openclawModel"],
+    ["openaiModel"],
+    ["llm", "model"]
+  ]);
+}
+
+function pickConfiguredAgentId(target) {
+  return pickStringByPaths(target, [["id"], ["agent"], ["agentId"], ["name"]]);
 }
 
 function collectObjectEntries(value) {
@@ -308,15 +327,24 @@ export function normalizeAgentStatus(rawStatus) {
     return "idle";
   }
 
-  if (ERROR_MARKERS.has(normalized) || [...ERROR_MARKERS].some((marker) => normalized.includes(marker))) {
+  if (
+    ERROR_MARKERS.has(normalized) ||
+    [...ERROR_MARKERS].some((marker) => normalized.includes(marker))
+  ) {
     return "error";
   }
 
-  if (BUSY_MARKERS.has(normalized) || [...BUSY_MARKERS].some((marker) => normalized.includes(marker))) {
+  if (
+    BUSY_MARKERS.has(normalized) ||
+    [...BUSY_MARKERS].some((marker) => normalized.includes(marker))
+  ) {
     return "busy";
   }
 
-  if (OFFLINE_MARKERS.has(normalized) || [...OFFLINE_MARKERS].some((marker) => normalized.includes(marker))) {
+  if (
+    OFFLINE_MARKERS.has(normalized) ||
+    [...OFFLINE_MARKERS].some((marker) => normalized.includes(marker))
+  ) {
     return "offline";
   }
 
@@ -384,14 +412,20 @@ async function loadConfiguredAgentEntries({ env = process.env } = {}) {
       continue;
     }
 
-    const defaults = isObjectRecord(configJson?.agents?.defaults) ? configJson.agents.defaults : null;
+    const defaults = isObjectRecord(configJson?.agents?.defaults)
+      ? configJson.agents.defaults
+      : null;
     const configuredList = Array.isArray(configJson?.agents?.list) ? configJson.agents.list : [];
     const stateDir = path.dirname(configPath);
     const normalizedAgents = configuredList
       .map((entry) => normalizeConfiguredAgentEntry(entry, defaults, stateDir))
       .filter((entry) => entry !== null);
 
-    const legacyRoutedAgents = normalizeLegacyRoutedAgentEntries(configJson?.routing?.agents, defaults, stateDir);
+    const legacyRoutedAgents = normalizeLegacyRoutedAgentEntries(
+      configJson?.routing?.agents,
+      defaults,
+      stateDir
+    );
     const discoveredAgents = normalizedAgents.length > 0 ? normalizedAgents : legacyRoutedAgents;
 
     if (discoveredAgents.length > 0) {
@@ -460,6 +494,62 @@ export async function loadLatestSessionRegistryEntries({ env = process.env } = {
   }
 
   return loadConfiguredAgentEntries({ env });
+}
+
+export async function resolveConfiguredAgentModel(agentId, { env = process.env } = {}) {
+  const targetAgentId = toNonEmptyString(agentId);
+  const configCandidates = resolveConfigCandidates(env);
+
+  for (const configPath of configCandidates) {
+    let rawConfig;
+    try {
+      rawConfig = await readFile(configPath, "utf8");
+    } catch {
+      continue;
+    }
+
+    let configJson;
+    try {
+      configJson = parseConfigLikeJson(rawConfig);
+    } catch {
+      continue;
+    }
+
+    const defaults = isObjectRecord(configJson?.agents?.defaults)
+      ? configJson.agents.defaults
+      : null;
+    const defaultModel = pickConfiguredModel(defaults);
+
+    const configuredList = Array.isArray(configJson?.agents?.list) ? configJson.agents.list : [];
+    if (targetAgentId) {
+      for (const entry of configuredList) {
+        if (!isObjectRecord(entry)) {
+          continue;
+        }
+
+        const entryAgentId = pickConfiguredAgentId(entry);
+        if (entryAgentId !== targetAgentId) {
+          continue;
+        }
+
+        return pickConfiguredModel(entry) ?? defaultModel;
+      }
+    }
+
+    const legacyRoutedAgent =
+      targetAgentId && isObjectRecord(configJson?.routing?.agents)
+        ? configJson.routing.agents[targetAgentId]
+        : null;
+    if (isObjectRecord(legacyRoutedAgent)) {
+      return pickConfiguredModel(legacyRoutedAgent) ?? defaultModel;
+    }
+
+    if (defaultModel) {
+      return defaultModel;
+    }
+  }
+
+  return null;
 }
 
 export function resolveRegistryWorkspacePath(entry, { env = process.env } = {}) {

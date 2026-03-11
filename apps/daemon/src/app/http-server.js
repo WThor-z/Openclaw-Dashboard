@@ -13,6 +13,7 @@ import { resolveBindConfig } from "./config.js";
 import { createWebhookOutboxWorker } from "../platform/webhooks/outbox-worker.js";
 import { resolveWebhookEndpointPolicy } from "../platform/webhooks/endpoint-policy.js";
 import { createOpenclawRuntimeAdapter } from "../platform/openclaw/runtime-adapter.js";
+import { resolveConfiguredAgentModel } from "../platform/openclaw/session-registry.js";
 
 function parseRequestUrl(req) {
   return new URL(req.url ?? "/", "http://localhost");
@@ -36,7 +37,8 @@ function requestHandlerFactory({
   writeArmWindowMs,
   readAuthEnabled,
   webhookEndpointPolicy,
-  openclawRuntimeAdapter
+  openclawRuntimeAdapter,
+  resolveAgentModel
 }) {
   const readRouter = createReadApiRouter({
     repositories,
@@ -49,7 +51,8 @@ function requestHandlerFactory({
     readOnlyMode,
     writeArmWindowMs,
     webhookEndpointPolicy,
-    openclawRuntimeAdapter
+    openclawRuntimeAdapter,
+    resolveAgentModel
   });
 
   return async function handleRequest(req, res) {
@@ -117,6 +120,7 @@ export function createDaemonServer({
   monitorProviders = createMonitorProvidersFromEnv(),
   webhookEndpointPolicy = resolveWebhookEndpointPolicy(),
   openclawRuntimeAdapter = createOpenclawRuntimeAdapter(),
+  resolveAgentModel = (agentId) => resolveConfiguredAgentModel(agentId),
   webhookWorker,
   webhookWorkerOptions = {}
 } = {}) {
@@ -132,7 +136,8 @@ export function createDaemonServer({
       writeArmWindowMs,
       readAuthEnabled,
       webhookEndpointPolicy,
-      openclawRuntimeAdapter
+      openclawRuntimeAdapter,
+      resolveAgentModel
     })
   );
 
