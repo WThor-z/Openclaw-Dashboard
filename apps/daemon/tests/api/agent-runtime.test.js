@@ -506,6 +506,28 @@ describe("agent runtime APIs", () => {
       updatedAt: "2026-03-10T10:00:00.000Z",
       archivedAt: null
     });
+    repositories.conversationMessages.insert({
+      id: "message-user-1",
+      conversationId,
+      role: "user",
+      state: "completed",
+      content: "hello",
+      errorCode: null,
+      externalMessageId: null,
+      createdAt: "2026-03-10T10:00:01.000Z",
+      updatedAt: "2026-03-10T10:00:01.000Z"
+    });
+    repositories.conversationMessages.insert({
+      id: "message-assistant-1",
+      conversationId,
+      role: "assistant",
+      state: "completed",
+      content: "world",
+      errorCode: null,
+      externalMessageId: null,
+      createdAt: "2026-03-10T10:00:02.000Z",
+      updatedAt: "2026-03-10T10:00:02.000Z"
+    });
 
     const tempDirectory = await mkdtemp(join(tmpdir(), "openclaw-daemon-test-"));
     tempDirectories.push(tempDirectory);
@@ -540,6 +562,83 @@ describe("agent runtime APIs", () => {
     expect(body.items).toHaveLength(2);
     expect(body.items[0]).toMatchObject({ kind: "assistant" });
     expect(body.items[1]).toMatchObject({ kind: "user" });
+  });
+
+  it("does not leak unrelated transcript history into a newer conversation timeline", async () => {
+    const repositories = createFixtureRepositories();
+    const conversationId = "conversation-isolated-timeline";
+    const sessionKey = `dashboard:agent-1:${conversationId}`;
+    repositories.conversations.insert({
+      id: conversationId,
+      agentId: "agent-1",
+      workspaceId: "ws-1",
+      sessionKey,
+      title: "Isolated timeline",
+      status: "active",
+      model: null,
+      createdAt: "2026-03-10T10:05:00.000Z",
+      updatedAt: "2026-03-10T10:05:10.000Z",
+      archivedAt: null
+    });
+    repositories.conversationMessages.insert({
+      id: "message-user-2",
+      conversationId,
+      role: "user",
+      state: "completed",
+      content: "new question",
+      errorCode: null,
+      externalMessageId: null,
+      createdAt: "2026-03-10T10:05:01.000Z",
+      updatedAt: "2026-03-10T10:05:01.000Z"
+    });
+    repositories.conversationMessages.insert({
+      id: "message-assistant-2",
+      conversationId,
+      role: "assistant",
+      state: "completed",
+      content: "new answer",
+      errorCode: null,
+      externalMessageId: null,
+      createdAt: "2026-03-10T10:05:09.000Z",
+      updatedAt: "2026-03-10T10:05:09.000Z"
+    });
+
+    const tempDirectory = await mkdtemp(join(tmpdir(), "openclaw-daemon-test-"));
+    tempDirectories.push(tempDirectory);
+    const transcriptPath = join(tempDirectory, "transcript.jsonl");
+    await writeFile(
+      transcriptPath,
+      `${JSON.stringify({ type: "user", timestamp: "2026-03-10T10:00:01.000Z", text: "old question" })}\n${JSON.stringify({ type: "assistant", timestamp: "2026-03-10T10:00:02.000Z", text: "old answer" })}\n${JSON.stringify({ type: "user", timestamp: "2026-03-10T10:05:01.000Z", text: "new question" })}\n${JSON.stringify({ type: "assistant", timestamp: "2026-03-10T10:05:09.000Z", text: "new answer" })}\n`,
+      "utf8"
+    );
+
+    const runtimeAdapter = createRuntimeAdapter({
+      sessions: {
+        list: vi.fn(async () => ({
+          path: join(tempDirectory, "sessions.json"),
+          sessions: [{ key: sessionKey, transcriptPath }]
+        }))
+      }
+    });
+    const server = await startServer({ repositories, openclawRuntimeAdapter: runtimeAdapter });
+    const baseUrl = endpointFrom(server.address());
+
+    const response = await fetch(
+      `${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}/timeline?limit=20`,
+      {
+        headers: authorizedHeaders()
+      }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.source).toBe("openclaw-native-transcript");
+    expect(body.items).toHaveLength(2);
+    expect(
+      body.items.map((item) => item.payload.text ?? item.payload.message?.text ?? item.payload.text)
+    ).not.toContain("old question");
+    expect(JSON.stringify(body.items)).toContain("new question");
+    expect(JSON.stringify(body.items)).toContain("new answer");
   });
 
   it("replays duplicate message sends without duplicating messages or audit events", async () => {

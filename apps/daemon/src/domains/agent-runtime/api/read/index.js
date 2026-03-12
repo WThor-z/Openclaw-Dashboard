@@ -148,7 +148,7 @@ function toTranscriptTimelineItem(eventValue, index, conversation) {
   };
 }
 
-async function readTranscriptTimelineItems(transcriptPath, conversation, limit) {
+async function readTranscriptTimelineItems(transcriptPath, conversation, limit, timeWindow = null) {
   const content = await readFile(transcriptPath, "utf8");
   const lines = content
     .split(/\r?\n/)
@@ -164,9 +164,6 @@ async function readTranscriptTimelineItems(transcriptPath, conversation, limit) 
     }
   }
 
-  const createdAtThreshold = Number.isFinite(Date.parse(conversation.createdAt))
-    ? Date.parse(conversation.createdAt)
-    : 0;
   const candidates = parsedEvents.map((eventValue, index) => ({
     eventValue,
     index,
@@ -177,8 +174,10 @@ async function readTranscriptTimelineItems(transcriptPath, conversation, limit) 
       index
     )
   }));
-  const filtered = candidates.filter((item) => item.ts >= createdAtThreshold);
-  const selectedBase = (filtered.length > 0 ? filtered : candidates).slice(-limit);
+  const filtered = timeWindow
+    ? candidates.filter((item) => item.ts >= timeWindow.startMs && item.ts <= timeWindow.endMs)
+    : candidates;
+  const selectedBase = filtered.slice(-limit);
   const selected = selectedBase.map((item) =>
     toTranscriptTimelineItem(item.eventValue, item.index, conversation)
   );
@@ -215,7 +214,12 @@ function resolveTranscriptPath({ sessionsPayload, sessionRow }) {
   return join(dirname(sessionsPath), `${sessionId}.jsonl`);
 }
 
-async function readNativeConversationTimeline(openclawRuntimeAdapter, conversation, limit) {
+async function readNativeConversationTimeline(
+  repositories,
+  openclawRuntimeAdapter,
+  conversation,
+  limit
+) {
   if (typeof openclawRuntimeAdapter?.sessions?.list !== "function") {
     return null;
   }
@@ -231,12 +235,43 @@ async function readNativeConversationTimeline(openclawRuntimeAdapter, conversati
     return null;
   }
 
-  const items = await readTranscriptTimelineItems(transcriptPath, conversation, limit);
+  const timeWindow = resolveConversationTranscriptWindow(repositories, conversation);
+  if (timeWindow === null) {
+    return null;
+  }
+
+  const items = await readTranscriptTimelineItems(transcriptPath, conversation, limit, timeWindow);
   return {
     items,
     limit,
     conversationId: conversation.id,
     source: "openclaw-native-transcript"
+  };
+}
+
+function resolveConversationTranscriptWindow(repositories, conversation) {
+  const messages = repositories?.conversationMessages?.listByConversation
+    ? repositories.conversationMessages.listByConversation(conversation.id)
+    : [];
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return null;
+  }
+
+  const timestamps = messages
+    .flatMap((message) => {
+      const createdAt = Date.parse(message.createdAt);
+      const updatedAt = Date.parse(message.updatedAt);
+      return [createdAt, updatedAt].filter((value) => Number.isFinite(value));
+    })
+    .sort((left, right) => left - right);
+
+  if (timestamps.length === 0) {
+    return null;
+  }
+
+  return {
+    startMs: timestamps[0] - 5_000,
+    endMs: timestamps[timestamps.length - 1] + 5_000
   };
 }
 
@@ -422,6 +457,7 @@ async function readConversationTimeline(
 
   try {
     const nativeTimeline = await readNativeConversationTimeline(
+      repositories,
       openclawRuntimeAdapter,
       conversation,
       maxItems
