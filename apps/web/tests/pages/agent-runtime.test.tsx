@@ -740,6 +740,58 @@ describe("agent runtime routes", () => {
     expect(await screen.findByText("failed")).toBeTruthy();
   });
 
+  it("does not leak unsent draft text when switching to an archived conversation", async () => {
+    installRuntimeFetchMock({});
+
+    render(<App />);
+
+    fireEvent.change(screen.getByTestId("daemon-token-input"), {
+      target: { value: "dev-token" }
+    });
+    fireEvent.click(screen.getByTestId("connect-button"));
+
+    expect(await screen.findByTestId("agent-workspace-title")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("agent-runtime-link-agent-1"));
+
+    expect(await screen.findByTestId("conversation-list")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("new-conversation-button"));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-2");
+    });
+
+    fireEvent.click(await screen.findByTestId("archive-conversation-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("conversation-row-conversation-2").textContent).toContain(
+        "archived"
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-1"));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-1");
+    });
+
+    const conversationInput = screen.getByTestId("conversation-input") as HTMLTextAreaElement;
+    fireEvent.change(conversationInput, { target: { value: "draft scoped to conversation A" } });
+    expect(conversationInput.value).toBe("draft scoped to conversation A");
+
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-2"));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-2");
+    });
+
+    const archivedConversationInput = screen.getByTestId(
+      "conversation-input"
+    ) as HTMLTextAreaElement;
+    expect(archivedConversationInput.disabled).toBe(true);
+    expect(archivedConversationInput.value).toBe("");
+  });
+
   it("schedules success flow: creates schedule, runs schedule, and shows run history", async () => {
     installRuntimeFetchMock({ schedules: [], scheduleRuns: {} });
 

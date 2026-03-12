@@ -470,7 +470,9 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
   const [activeTab, setActiveTab] = useState<RuntimeTabId>("conversations");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [threadMessages, setThreadMessages] = useState<ConversationMessage[]>([]);
-  const [composerValue, setComposerValue] = useState("");
+  const [composerDraftByConversation, setComposerDraftByConversation] = useState<
+    Record<string, string>
+  >({});
   const [isConversationsLoading, setIsConversationsLoading] = useState(false);
   const [isThreadLoading, setIsThreadLoading] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
@@ -940,6 +942,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
     () => firstNonEmptyUserMessage(threadMessages, t),
     [t, threadMessages]
   );
+  const composerValue = conversationId ? (composerDraftByConversation[conversationId] ?? "") : "";
 
   const activeTabMeta = useMemo(
     () => runtimeTabs.find((tab) => tab.id === activeTab) ?? runtimeTabs[0],
@@ -1555,7 +1558,17 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                       <textarea
                         data-testid="conversation-input"
                         value={composerValue}
-                        onChange={(event) => setComposerValue(event.target.value)}
+                        onChange={(event) => {
+                          if (!conversationId) {
+                            return;
+                          }
+
+                          const nextDraft = event.target.value;
+                          setComposerDraftByConversation((previous) => ({
+                            ...previous,
+                            [conversationId]: nextDraft
+                          }));
+                        }}
                         disabled={!conversationId || activeConversation?.status === "archived"}
                         className="h-24 w-full resize-none rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none transition-colors focus:border-[#1f5ba6]/50 disabled:cursor-not-allowed disabled:bg-slate-100"
                         placeholder={
@@ -1615,7 +1628,8 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                                 return;
                               }
 
-                              const draft = composerValue;
+                              const targetConversationId = conversationId;
+                              const draft = composerDraftByConversation[targetConversationId] ?? "";
                               const content = draft.trim();
                               if (content.length === 0) {
                                 return;
@@ -1627,7 +1641,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
 
                               const optimisticUserMessage: ConversationMessage = {
                                 id: optimisticUserId,
-                                conversationId,
+                                conversationId: targetConversationId,
                                 role: "user",
                                 state: "completed",
                                 content,
@@ -1638,7 +1652,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                               };
                               const optimisticAssistantMessage: ConversationMessage = {
                                 id: optimisticAssistantId,
-                                conversationId,
+                                conversationId: targetConversationId,
                                 role: "assistant",
                                 state: "pending",
                                 content: "",
@@ -1648,7 +1662,10 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                                 updatedAt: now
                               };
 
-                              setComposerValue("");
+                              setComposerDraftByConversation((previous) => ({
+                                ...previous,
+                                [targetConversationId]: ""
+                              }));
                               setConversationError(null);
                               setIsSendingMessage(true);
                               setThreadMessages((previous) =>
@@ -1660,7 +1677,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                               );
                               setConversations((previous) =>
                                 previous.map((conversation) =>
-                                  conversation.id !== conversationId
+                                  conversation.id !== targetConversationId
                                     ? conversation
                                     : {
                                         ...conversation,
@@ -1679,7 +1696,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                                 await armWrites();
                                 const response = await fetch(
                                   `/api/control/conversations/${encodeURIComponent(
-                                    conversationId
+                                    targetConversationId
                                   )}/messages/send`,
                                   {
                                     method: "POST",
@@ -1728,7 +1745,10 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                                     ? error.message
                                     : t("runtime.conversations.sendFailed");
                                 setConversationError(message);
-                                setComposerValue(draft);
+                                setComposerDraftByConversation((previous) => ({
+                                  ...previous,
+                                  [targetConversationId]: draft
+                                }));
                                 setThreadMessages((previous) =>
                                   sortMessagesChronologically(
                                     previous.map((messageEntry) => {
