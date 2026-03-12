@@ -1957,17 +1957,17 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                   >
                     {conversationId ? (
                       <div className="border-b border-slate-200 px-4 py-3">
-                        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                        <div className="inline-flex w-full items-center gap-1 rounded-xl border border-slate-200/90 bg-gradient-to-b from-slate-100/90 via-slate-50 to-white p-1 shadow-[inset_0_1px_1px_rgba(255,255,255,0.9),inset_0_-1px_0_rgba(148,163,184,0.12)] sm:w-auto">
                           <button
                             type="button"
                             data-testid="conversation-view-compact-button"
                             onClick={() => {
                               setConversationViewMode("compact");
                             }}
-                            className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition-colors ${
+                            className={`flex-1 rounded-lg border px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-[0.16em] transition-all sm:flex-none sm:min-w-[7.25rem] ${
                               conversationViewMode === "compact"
-                                ? "bg-white text-slate-800 shadow-sm"
-                                : "text-slate-600 hover:text-slate-800"
+                                ? "border-[#1f5ba6]/20 bg-white text-[#123f77] shadow-[0_8px_18px_rgba(18,63,119,0.12),inset_0_1px_0_rgba(255,255,255,0.92)]"
+                                : "border-transparent text-slate-500 hover:border-white/70 hover:bg-white/70 hover:text-slate-800"
                             }`}
                           >
                             {t("runtime.conversations.view.compact")}
@@ -1978,10 +1978,10 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                             onClick={() => {
                               setConversationViewMode("detailed");
                             }}
-                            className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition-colors ${
+                            className={`flex-1 rounded-lg border px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-[0.16em] transition-all sm:flex-none sm:min-w-[7.25rem] ${
                               conversationViewMode === "detailed"
-                                ? "bg-white text-slate-800 shadow-sm"
-                                : "text-slate-600 hover:text-slate-800"
+                                ? "border-[#1f5ba6]/20 bg-white text-[#123f77] shadow-[0_8px_18px_rgba(18,63,119,0.12),inset_0_1px_0_rgba(255,255,255,0.92)]"
+                                : "border-transparent text-slate-500 hover:border-white/70 hover:bg-white/70 hover:text-slate-800"
                             }`}
                           >
                             {t("runtime.conversations.view.detailed")}
