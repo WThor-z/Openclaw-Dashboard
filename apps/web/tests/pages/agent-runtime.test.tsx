@@ -9,6 +9,8 @@ type Deferred<T> = {
   resolve: (value: T) => void;
 };
 
+type DeferredMap = Record<string, Deferred<void>>;
+
 type ConversationSummary = {
   id: string;
   agentId: string;
@@ -33,6 +35,19 @@ type ConversationMessage = {
   externalMessageId: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type RuntimeTimelineEvent = {
+  id: string;
+  source: string;
+  sessionId: string | null;
+  taskId: string | null;
+  workspaceId: string;
+  level: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  dedupeKey: string | null;
 };
 
 type ScheduleSummary = {
@@ -113,7 +128,7 @@ function createConversation(
     id: conversationId,
     agentId: "agent-1",
     workspaceId: "ws-1",
-    sessionKey: `dashboard:agent-1:${conversationId}`,
+    sessionKey: `agent:agent-1:dashboard:${conversationId}`,
     title,
     status: "active",
     createdAt: "2026-03-10T00:00:00.000Z",
@@ -121,6 +136,26 @@ function createConversation(
     archivedAt: null,
     lastMessageAt: null,
     messageCount: 0
+  };
+}
+
+function createMessage(
+  conversationId: string,
+  role: "user" | "assistant",
+  content: string,
+  overrides?: Partial<ConversationMessage>
+): ConversationMessage {
+  return {
+    id: `${role}-${conversationId}-${content.replace(/\s+/g, "-").toLowerCase()}`,
+    conversationId,
+    role,
+    state: "completed",
+    content,
+    errorCode: null,
+    externalMessageId: null,
+    createdAt: "2026-03-10T00:00:01.000Z",
+    updatedAt: "2026-03-10T00:00:01.000Z",
+    ...overrides
   };
 }
 
@@ -210,6 +245,12 @@ function installRuntimeFetchMock(options?: {
   sendGate?: Deferred<void>;
   failSend?: boolean;
   failMessage?: string;
+  initialConversations?: ConversationSummary[];
+  initialMessagesByConversation?: Record<string, ConversationMessage[]>;
+  initialTimelineByConversation?: Record<string, RuntimeTimelineEvent[]>;
+  detailGates?: DeferredMap;
+  messageGates?: DeferredMap;
+  timelineGates?: DeferredMap;
   schedules?: ScheduleSummary[];
   scheduleRuns?: Record<string, ScheduleRun[]>;
   heartbeat?: {
@@ -224,9 +265,18 @@ function installRuntimeFetchMock(options?: {
   failMemory?: boolean;
   failMemoryMessage?: string;
 }) {
-  const conversations: ConversationSummary[] = [createConversation("conversation-1")];
+  const conversations: ConversationSummary[] = options?.initialConversations
+    ? [...options.initialConversations]
+    : [createConversation("conversation-1")];
   const messageStore = new Map<string, ConversationMessage[]>();
-  messageStore.set("conversation-1", []);
+  for (const conversation of conversations) {
+    messageStore.set(
+      conversation.id,
+      options?.initialMessagesByConversation?.[conversation.id]
+        ? [...options.initialMessagesByConversation[conversation.id]]
+        : []
+    );
+  }
   let nextConversationIndex = 2;
   let schedules: ScheduleSummary[] = options?.schedules ?? [createSchedule("job-1")];
   let scheduleRunsByJob: Record<string, ScheduleRun[]> = options?.scheduleRuns ?? {
@@ -312,95 +362,99 @@ function installRuntimeFetchMock(options?: {
         const conversationId = requestUrl
           .replace("/api/conversations/", "")
           .replace(/\/timeline(?:\?.*)?$/, "");
-        return createJsonResponse(200, {
-          items: [
-            {
-              id: `event-${conversationId}-user`,
-              source: "openclaw-native-transcript",
-              sessionId: null,
-              taskId: null,
-              workspaceId: "ws-1",
-              level: "info",
-              kind: "message",
-              payload: {
-                type: "message",
-                message: {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: "Hello runtime"
-                    }
-                  ]
-                }
-              },
-              createdAt: "2026-03-10T00:00:01.000Z",
-              dedupeKey: `message:user:${conversationId}`
-            },
-            {
-              id: `event-${conversationId}-assistant`,
-              source: "openclaw-native-transcript",
-              sessionId: null,
-              taskId: null,
-              workspaceId: "ws-1",
-              level: "info",
-              kind: "message",
-              payload: {
-                type: "message",
-                message: {
-                  role: "assistant",
-                  content: [
-                    {
-                      type: "thinking",
-                      thinking: "Checking the weather tool before answering."
-                    },
-                    {
-                      type: "toolCall",
-                      id: "call-weather-1",
-                      name: "get_weather",
-                      arguments: {
-                        city: "Shanghai"
-                      }
-                    },
-                    {
-                      type: "text",
-                      text: "The weather is ready."
-                    }
-                  ]
-                }
-              },
-              createdAt: "2026-03-10T00:00:02.000Z",
-              dedupeKey: `message:assistant:${conversationId}`
-            },
-            {
-              id: `event-${conversationId}-tool-result`,
-              source: "openclaw-native-transcript",
-              sessionId: null,
-              taskId: null,
-              workspaceId: "ws-1",
-              level: "info",
-              kind: "message",
-              payload: {
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolName: "get_weather",
-                  content: [
-                    {
-                      type: "text",
-                      text: "Sunny, 26C"
-                    }
-                  ],
-                  details: {
-                    city: "Shanghai",
-                    temperatureC: 26
+        if (options?.timelineGates?.[conversationId]) {
+          await options.timelineGates[conversationId].promise;
+        }
+        const timelineItems = options?.initialTimelineByConversation?.[conversationId] ?? [
+          {
+            id: `event-${conversationId}-user`,
+            source: "openclaw-native-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "message",
+            payload: {
+              type: "message",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "Hello runtime"
                   }
+                ]
+              }
+            },
+            createdAt: "2026-03-10T00:00:01.000Z",
+            dedupeKey: `message:user:${conversationId}`
+          },
+          {
+            id: `event-${conversationId}-assistant`,
+            source: "openclaw-native-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "message",
+            payload: {
+              type: "message",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "thinking",
+                    thinking: "Checking the weather tool before answering."
+                  },
+                  {
+                    type: "toolCall",
+                    id: "call-weather-1",
+                    name: "get_weather",
+                    arguments: {
+                      city: "Shanghai"
+                    }
+                  },
+                  {
+                    type: "text",
+                    text: "The weather is ready."
+                  }
+                ]
+              }
+            },
+            createdAt: "2026-03-10T00:00:02.000Z",
+            dedupeKey: `message:assistant:${conversationId}`
+          },
+          {
+            id: `event-${conversationId}-tool-result`,
+            source: "openclaw-native-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "message",
+            payload: {
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolName: "get_weather",
+                content: [
+                  {
+                    type: "text",
+                    text: "Sunny, 26C"
+                  }
+                ],
+                details: {
+                  city: "Shanghai",
+                  temperatureC: 26
                 }
-              },
-              createdAt: "2026-03-10T00:00:03.000Z",
-              dedupeKey: `message:tool-result:${conversationId}`
-            }
-          ],
+              }
+            },
+            createdAt: "2026-03-10T00:00:03.000Z",
+            dedupeKey: `message:tool-result:${conversationId}`
+          }
+        ];
+        return createJsonResponse(200, {
+          items: timelineItems,
           limit: 120,
           conversationId
         });
@@ -435,6 +489,9 @@ function installRuntimeFetchMock(options?: {
 
       if (requestUrl.startsWith("/api/conversations/") && !requestUrl.endsWith("/messages")) {
         const conversationId = requestUrl.replace("/api/conversations/", "");
+        if (options?.detailGates?.[conversationId]) {
+          await options.detailGates[conversationId].promise;
+        }
         const conversation = conversations.find((item) => item.id === conversationId);
         if (!conversation) {
           return createJsonResponse(404, { code: "CONVERSATION_NOT_FOUND" });
@@ -469,6 +526,9 @@ function installRuntimeFetchMock(options?: {
         const conversationId = requestUrl
           .replace("/api/conversations/", "")
           .replace("/messages", "");
+        if (options?.messageGates?.[conversationId]) {
+          await options.messageGates[conversationId].promise;
+        }
         const items = messageStore.get(conversationId) ?? [];
         return createJsonResponse(200, { items: [...items] });
       }
@@ -897,6 +957,211 @@ describe("agent runtime routes", () => {
     expect(screen.getAllByText("get_weather").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Shanghai/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sunny, 26C").length).toBeGreaterThan(0);
+  });
+
+  it("renders meaningful summaries for transcript system events in detailed view", async () => {
+    installRuntimeFetchMock({
+      initialTimelineByConversation: {
+        "conversation-1": [
+          {
+            id: "event-session",
+            source: "openclaw-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "session",
+            payload: {
+              type: "session",
+              version: 3,
+              cwd: "/tmp/agent-workspace"
+            },
+            createdAt: "2026-03-10T00:00:00.000Z",
+            dedupeKey: null
+          },
+          {
+            id: "event-custom",
+            source: "openclaw-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "custom",
+            payload: {
+              type: "custom",
+              customType: "model-snapshot",
+              data: {
+                provider: "kimi-coding",
+                modelId: "kimi-k2.5"
+              }
+            },
+            createdAt: "2026-03-10T00:00:01.000Z",
+            dedupeKey: null
+          },
+          {
+            id: "event-thinking-level",
+            source: "openclaw-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "thinking_level_change",
+            payload: {
+              type: "thinking_level_change",
+              thinkingLevel: "off"
+            },
+            createdAt: "2026-03-10T00:00:02.000Z",
+            dedupeKey: null
+          },
+          {
+            id: "event-model-change",
+            source: "openclaw-transcript",
+            sessionId: null,
+            taskId: null,
+            workspaceId: "ws-1",
+            level: "info",
+            kind: "model_change",
+            payload: {
+              type: "model_change",
+              provider: "kimi-coding",
+              modelId: "kimi-k2.5"
+            },
+            createdAt: "2026-03-10T00:00:03.000Z",
+            dedupeKey: null
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByTestId("daemon-token-input"), {
+      target: { value: "dev-token" }
+    });
+    fireEvent.click(screen.getByTestId("connect-button"));
+
+    expect(await screen.findByTestId("agent-workspace-title")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("agent-runtime-link-agent-1"));
+
+    expect(await screen.findByTestId("conversation-list")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-1"));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-1");
+    });
+
+    fireEvent.click(screen.getByTestId("conversation-view-detailed-button"));
+
+    const sessionRow = await screen.findByTestId("conversation-timeline-row-event-session");
+    const customRow = screen.getByTestId("conversation-timeline-row-event-custom");
+    const thinkingRow = screen.getByTestId("conversation-timeline-row-event-thinking-level");
+    expect(screen.queryByText("No event summary available.")).toBeNull();
+    expect(sessionRow.textContent).toContain("/tmp/agent-workspace");
+    expect(customRow.textContent).toContain("model-snapshot");
+    expect(customRow.textContent).toContain("kimi-k2.5");
+    expect(thinkingRow.textContent).toContain("off");
+  });
+
+  it("does not let stale thread responses overwrite the active conversation after a fast switch", async () => {
+    const conversationOne = createConversation("conversation-1", "Conversation One");
+    const conversationTwo = createConversation("conversation-2", "Conversation Two");
+    const messageGate = createDeferred<void>();
+
+    installRuntimeFetchMock({
+      initialConversations: [conversationOne, conversationTwo],
+      initialMessagesByConversation: {
+        "conversation-1": [
+          createMessage("conversation-1", "assistant", "assistant:stale conversation one")
+        ],
+        "conversation-2": [
+          createMessage("conversation-2", "assistant", "assistant:fresh conversation two")
+        ]
+      },
+      messageGates: {
+        "conversation-1": messageGate
+      }
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByTestId("daemon-token-input"), {
+      target: { value: "dev-token" }
+    });
+    fireEvent.click(screen.getByTestId("connect-button"));
+
+    expect(await screen.findByTestId("agent-workspace-title")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("agent-runtime-link-agent-1"));
+
+    expect(await screen.findByTestId("conversation-list")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-1"));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-1");
+    });
+
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-2"));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-2");
+    });
+
+    expect(await screen.findByText("assistant:fresh conversation two")).toBeTruthy();
+
+    messageGate.resolve();
+
+    await waitFor(() => {
+      expect(screen.queryByText("assistant:stale conversation one")).toBeNull();
+    });
+    expect(screen.getByText("assistant:fresh conversation two")).toBeTruthy();
+  });
+
+  it("does not let stale timeline responses overwrite the active detailed conversation after a fast switch", async () => {
+    const conversationOne = createConversation("conversation-1", "Conversation One");
+    const conversationTwo = createConversation("conversation-2", "Conversation Two");
+    const timelineGate = createDeferred<void>();
+
+    installRuntimeFetchMock({
+      initialConversations: [conversationOne, conversationTwo],
+      timelineGates: {
+        "conversation-1": timelineGate
+      }
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByTestId("daemon-token-input"), {
+      target: { value: "dev-token" }
+    });
+    fireEvent.click(screen.getByTestId("connect-button"));
+
+    expect(await screen.findByTestId("agent-workspace-title")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("agent-runtime-link-agent-1"));
+
+    expect(await screen.findByTestId("conversation-list")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-1"));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-1");
+    });
+
+    fireEvent.click(screen.getByTestId("conversation-view-detailed-button"));
+
+    fireEvent.click(screen.getByTestId("conversation-row-conversation-2"));
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/agents/agent-1/runtime/conversations/conversation-2");
+    });
+
+    expect(
+      await screen.findByTestId("conversation-timeline-row-event-conversation-2-user")
+    ).toBeTruthy();
+
+    timelineGate.resolve();
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("conversation-timeline-row-event-conversation-1-user")
+      ).toBeNull();
+    });
+    expect(screen.getByTestId("conversation-timeline-row-event-conversation-2-user")).toBeTruthy();
   });
 
   it("does not leak unsent draft text when switching to an archived conversation", async () => {

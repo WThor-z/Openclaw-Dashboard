@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../../app/auth.js";
@@ -260,6 +260,7 @@ function readConversationIdFromEventPayload(payload: unknown): string | null {
 
 function summarizeTimelineEvent(event: RuntimeTimelineEvent, t: TranslateFn) {
   const payloadRecord = asRecord(event.payload);
+  const eventType = readNonEmptyString(payloadRecord?.type) ?? event.kind;
   const responseRecord = asRecord(payloadRecord?.response);
   const requestRecord = asRecord(payloadRecord?.request);
   const bodyRecord = asRecord(responseRecord?.body);
@@ -272,7 +273,114 @@ function summarizeTimelineEvent(event: RuntimeTimelineEvent, t: TranslateFn) {
     readNonEmptyString(assistantMessageRecord?.content) ??
     readNonEmptyString(requestRecord?.content);
 
+  if (eventType === "session") {
+    return (
+      readNonEmptyString(payloadRecord?.cwd) ?? `session v${String(payloadRecord?.version ?? "?")}`
+    );
+  }
+
+  if (eventType === "model_change") {
+    const provider = readNonEmptyString(payloadRecord?.provider);
+    const modelId = readNonEmptyString(payloadRecord?.modelId);
+    if (provider && modelId) {
+      return `${provider} / ${modelId}`;
+    }
+    return provider ?? modelId ?? t("runtime.conversations.timelineDefaultSummary");
+  }
+
+  if (eventType === "thinking_level_change") {
+    return (
+      readNonEmptyString(payloadRecord?.thinkingLevel) ??
+      t("runtime.conversations.timelineDefaultSummary")
+    );
+  }
+
+  if (eventType === "custom") {
+    return (
+      readNonEmptyString(payloadRecord?.customType) ??
+      t("runtime.conversations.timelineDefaultSummary")
+    );
+  }
+
   return explicitMessage ?? t("runtime.conversations.timelineDefaultSummary");
+}
+
+function buildSystemTimelineBlocks(
+  event: RuntimeTimelineEvent,
+  t: TranslateFn
+): TimelineDisplayBlock[] {
+  const payloadRecord = asRecord(event.payload);
+  const eventType = readNonEmptyString(payloadRecord?.type) ?? event.kind;
+
+  if (!payloadRecord) {
+    return [];
+  }
+
+  if (eventType === "session") {
+    const cwd = readNonEmptyString(payloadRecord.cwd);
+    if (!cwd) {
+      return [];
+    }
+    return [
+      {
+        label: t("runtime.conversations.timeline.summary"),
+        content: cwd,
+        tone: "default"
+      }
+    ];
+  }
+
+  if (eventType === "model_change") {
+    const provider = readNonEmptyString(payloadRecord.provider);
+    const modelId = readNonEmptyString(payloadRecord.modelId);
+    const blocks: TimelineDisplayBlock[] = [];
+    if (provider || modelId) {
+      blocks.push({
+        label: t("runtime.conversations.timeline.summary"),
+        content: [provider, modelId].filter((value): value is string => Boolean(value)).join(" / "),
+        tone: "default"
+      });
+    }
+    return blocks;
+  }
+
+  if (eventType === "thinking_level_change") {
+    const thinkingLevel = readNonEmptyString(payloadRecord.thinkingLevel);
+    if (!thinkingLevel) {
+      return [];
+    }
+    return [
+      {
+        label: t("runtime.conversations.timeline.summary"),
+        content: thinkingLevel,
+        tone: "default"
+      }
+    ];
+  }
+
+  if (eventType === "custom") {
+    const blocks: TimelineDisplayBlock[] = [];
+    const customType = readNonEmptyString(payloadRecord.customType);
+    if (customType) {
+      blocks.push({
+        label: t("runtime.conversations.timeline.summary"),
+        content: customType,
+        tone: "default"
+      });
+    }
+
+    if (payloadRecord.data !== undefined) {
+      blocks.push({
+        label: t("runtime.conversations.timeline.details"),
+        content: toPrettyJson(payloadRecord.data),
+        tone: "muted"
+      });
+    }
+
+    return blocks;
+  }
+
+  return [];
 }
 
 function toPrettyJson(value: unknown) {
@@ -307,16 +415,20 @@ function normalizeTimelineEvent(event: RuntimeTimelineEvent, t: TranslateFn): Ti
   const contentParts = Array.isArray(messageRecord?.content) ? messageRecord.content : [];
 
   if (!messageRecord || !role) {
+    const blocks = buildSystemTimelineBlocks(event, t);
     return {
       heading: event.kind,
       eyebrow: t("runtime.conversations.timeline.event"),
-      blocks: [
-        {
-          label: t("runtime.conversations.timeline.summary"),
-          content: summarizeTimelineEvent(event, t),
-          tone: "default"
-        }
-      ]
+      blocks:
+        blocks.length > 0
+          ? blocks
+          : [
+              {
+                label: t("runtime.conversations.timeline.summary"),
+                content: summarizeTimelineEvent(event, t),
+                tone: "default"
+              }
+            ]
     };
   }
 
@@ -694,6 +806,9 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
   const navigate = useNavigate();
   const { token } = useAuth();
   const { t } = useI18n();
+  const activeConversationIdRef = useRef<string | null>(conversationId ?? null);
+  const threadRequestSequenceRef = useRef(0);
+  const timelineRequestSequenceRef = useRef(0);
   const [activeTab, setActiveTab] = useState<RuntimeTabId>("conversations");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [threadMessages, setThreadMessages] = useState<ConversationMessage[]>([]);
@@ -867,6 +982,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
   }, [agentId, t, token]);
 
   const loadConversationThread = useCallback(async () => {
+    const requestSequence = ++threadRequestSequenceRef.current;
     if (!token || !conversationId) {
       setThreadMessages([]);
       return;
@@ -906,8 +1022,20 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
 
       const messagesBody = (await messagesResponse.json()) as { items?: ConversationMessage[] };
       const messages = Array.isArray(messagesBody.items) ? messagesBody.items : [];
+      if (
+        threadRequestSequenceRef.current !== requestSequence ||
+        activeConversationIdRef.current !== conversationId
+      ) {
+        return;
+      }
       setThreadMessages(sortMessagesChronologically(messages));
     } catch (error) {
+      if (
+        threadRequestSequenceRef.current !== requestSequence ||
+        activeConversationIdRef.current !== conversationId
+      ) {
+        return;
+      }
       setThreadMessages([]);
       setConversationError(
         error instanceof Error ? error.message : t("runtime.conversations.loadOneFailed")
@@ -918,6 +1046,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
   }, [agentId, conversationId, t, token]);
 
   const loadConversationTimeline = useCallback(async () => {
+    const requestSequence = ++timelineRequestSequenceRef.current;
     if (!token || !conversationId) {
       setConversationTimelineEvents([]);
       return;
@@ -944,8 +1073,20 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
       const timelineItems = allItems.sort((left, right) =>
         left.createdAt.localeCompare(right.createdAt)
       );
+      if (
+        timelineRequestSequenceRef.current !== requestSequence ||
+        activeConversationIdRef.current !== conversationId
+      ) {
+        return;
+      }
       setConversationTimelineEvents(timelineItems);
     } catch (error) {
+      if (
+        timelineRequestSequenceRef.current !== requestSequence ||
+        activeConversationIdRef.current !== conversationId
+      ) {
+        return;
+      }
       setConversationTimelineEvents([]);
       setConversationError(
         error instanceof Error ? error.message : t("runtime.conversations.timelineLoadFailed")
@@ -954,6 +1095,10 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
       setIsTimelineLoading(false);
     }
   }, [conversationId, t, token]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = conversationId ?? null;
+  }, [conversationId]);
 
   const applyScheduleToForm = useCallback((schedule: ScheduleSummary) => {
     setScheduleForm({
@@ -2094,6 +2239,10 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                                   throw new Error(formatErrorMessage(response, body, t));
                                 }
 
+                                if (activeConversationIdRef.current !== targetConversationId) {
+                                  return;
+                                }
+
                                 setThreadMessages((previous) => {
                                   const withoutOptimistic = previous.filter(
                                     (message) =>
@@ -2124,6 +2273,9 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                                   error instanceof Error
                                     ? error.message
                                     : t("runtime.conversations.sendFailed");
+                                if (activeConversationIdRef.current !== targetConversationId) {
+                                  return;
+                                }
                                 setConversationError(message);
                                 setComposerDraftByConversation((previous) => ({
                                   ...previous,
@@ -2369,7 +2521,7 @@ export function AgentRuntimeShell({ agentId, conversationId }: AgentRuntimeShell
                               }))
                             }
                             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal text-slate-800 outline-none transition-colors focus:border-[#1f5ba6]/50"
-                            placeholder="dashboard:agent-1:daily-sync"
+                            placeholder="agent:agent-1:dashboard:daily-sync"
                           />
                         </label>
 
