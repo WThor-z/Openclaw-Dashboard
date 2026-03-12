@@ -167,20 +167,21 @@ async function readTranscriptTimelineItems(transcriptPath, conversation, limit) 
   const createdAtThreshold = Number.isFinite(Date.parse(conversation.createdAt))
     ? Date.parse(conversation.createdAt)
     : 0;
-  const selected = parsedEvents
-    .map((eventValue, index) => ({
-      eventValue,
-      index,
-      ts: toEpochMs(
-        asRecord(eventValue)?.timestamp ??
-          asRecord(eventValue)?.createdAt ??
-          asRecord(eventValue)?.ts,
-        index
-      )
-    }))
-    .filter((item) => item.ts >= createdAtThreshold)
-    .slice(-limit)
-    .map((item) => toTranscriptTimelineItem(item.eventValue, item.index, conversation));
+  const candidates = parsedEvents.map((eventValue, index) => ({
+    eventValue,
+    index,
+    ts: toEpochMs(
+      asRecord(eventValue)?.timestamp ??
+        asRecord(eventValue)?.createdAt ??
+        asRecord(eventValue)?.ts,
+      index
+    )
+  }));
+  const filtered = candidates.filter((item) => item.ts >= createdAtThreshold);
+  const selectedBase = (filtered.length > 0 ? filtered : candidates).slice(-limit);
+  const selected = selectedBase.map((item) =>
+    toTranscriptTimelineItem(item.eventValue, item.index, conversation)
+  );
 
   return selected.reverse();
 }
